@@ -1,0 +1,7 @@
+[report]
+omit =
+    setup.py
+    intake_google_analytics/__main__.py
+    intake_google_analytics/_version.py
+    versioneer.py
+    tests/*
