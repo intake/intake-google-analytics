@@ -53,12 +53,13 @@ def to_dataframe(report, parse_dates=True):
         df[c] = df[c].astype(dtype)
 
     if parse_dates:
-        for c, v in df.iloc[[0]].iteritems():
-            if is_string_dtype(v):
-                for fmt,regex in DATETIME_FORMATS.items():
-                    if v.str.fullmatch(regex).all():
-                        df[c] = pd.to_datetime(df[c], format=fmt)
-                        break
+        first_row = df.iloc[[0]]
+        string_columns = first_row.dtypes[first_row.dtypes.apply(is_string_dtype)].index
+        for column in string_columns:
+            for format, regex in DATETIME_FORMATS.items():
+                if first_row[column].str.fullmatch(regex).all():
+                    df[column] = pd.to_datetime(df[column], format=format)
+                    break  # continue to next column
 
     return df
 
@@ -108,7 +109,6 @@ def ua_query(view_id, start_date, end_date, metrics, dimensions=None, filters=No
     report = result['reports'][0]
 
     dfs = [to_dataframe(report)]
-    print(report.keys())
     while report.get('nextPageToken'):
         body['reportRequests'][0]['pageToken'] = report.get('nextPageToken')
         result = ga.batchGet(body=body).execute()
