@@ -1,14 +1,11 @@
-from urllib import parse
-import pandas as pd
-from pandas.api.types import is_string_dtype
-from googleapiclient import discovery
-from google.oauth2.credentials import Credentials
-import json
-import os
-import logging
 import datetime as dt
 import re
 from collections import OrderedDict
+
+import pandas as pd
+from google.oauth2.credentials import Credentials
+from googleapiclient import discovery
+from pandas.api.types import is_string_dtype
 
 DTYPES = {
     "INTEGER": int,
@@ -109,7 +106,14 @@ def ua_query(view_id, start_date, end_date, metrics, dimensions=None, filters=No
 
     result = ga.batchGet(body=body).execute()
     report = result['reports'][0]
-    return report
 
-    # df = _to_df(report, [dates['startDate'], dates['endDate']])
-    # return df
+    dfs = [to_dataframe(report)]
+    print(report.keys())
+    while report.get('nextPageToken'):
+        body['reportRequests'][0]['pageToken'] = report.get('nextPageToken')
+        result = ga.batchGet(body=body).execute()
+        report = result['reports'][0]
+        dfs.append(to_dataframe(report))
+
+    df = pd.concat(dfs, ignore_index=True)
+    return df
