@@ -34,7 +34,7 @@ class GoogleAnalyticsQuerySource(DataSource):
     Run a Google Analytics (Universal Analytics) query and return a Data Frame
     """
 
-    name = 'google-analytics-query'
+    name = 'google_analytics_query'
     version = __version__
     container = 'dataframe'
     partition_access = True
