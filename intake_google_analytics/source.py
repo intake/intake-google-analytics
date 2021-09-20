@@ -1,11 +1,15 @@
 import datetime as dt
 import re
 from collections import OrderedDict
+from typing import Union
 
 import pandas as pd
-from google.oauth2.credentials import Credentials
+from google.oauth2.service_account import Credentials
 from googleapiclient import discovery
+from intake.source.base import DataSource, Schema
 from pandas.api.types import is_string_dtype
+
+from . import __version__
 
 DTYPES = {
     "INTEGER": int,
@@ -15,6 +19,8 @@ DTYPES = {
     "CURRENCY": float
 }
 
+DateTypes = Union[str, dt.date, dt.datetime, pd.Timestamp]
+
 DATETIME_FORMATS = OrderedDict([
     ('%Y%m', re.compile(r'^(?P<year>[0-9]{4})(?P<month>1[0-2]|0[1-9])$')),
     ('%Y%m%d', re.compile(r'^(?P<year>[0-9]{4})(?P<month>1[0-2]|0[1-9])(?P<day>3[01]|0[1-9]|[12][0-9])$')),
@@ -23,97 +29,153 @@ DATETIME_FORMATS = OrderedDict([
 ])
 
 
-def to_dataframe(report, parse_dates=True):
-    headers = report['columnHeader']
+class GoogleAnalyticsQuerySource(DataSource):
+    """
+    Run a Google Analytics (Universal Analytics) query and return a Data Frame
+    """
 
-    columns = headers.get('dimensions', [])
-    metric_columns = headers['metricHeader']['metricHeaderEntries']
+    name = 'google-analytics-query'
+    version = __version__
+    container = 'dataframe'
+    partition_access = True
 
-    dtypes = {}
-    for c in metric_columns:
-        name = c['name']
-        columns.append(name)
-        dtypes[name] = DTYPES[c['type']]
+    def __init__(self, view_id, start_date, end_date,
+                 metrics, dimensions=None, filters=None, include_empty=False,
+                 credentials_path=None,
+                 metadata=None):
 
-    data = []
-    for row in report['data']['rows']:
+        self._df = None
 
-        dim_values = row.get('dimensions', [])
-
-        this_row = []
-        metric_values = row['metrics'][0]['values']
-
-        this_row.extend(dim_values)
-        this_row.extend(metric_values)
-
-        data.append(this_row)
-
-    df = pd.DataFrame(data=data, columns=columns)
-    for c, dtype in dtypes.items():
-        df[c] = df[c].astype(dtype)
-
-    if parse_dates:
-        first_row = df.iloc[[0]]
-        string_columns = first_row.dtypes[first_row.dtypes.apply(is_string_dtype)].index
-        for column in string_columns:
-            for format, regex in DATETIME_FORMATS.items():
-                if first_row[column].str.fullmatch(regex).all():
-                    df[column] = pd.to_datetime(df[column], format=format)
-                    break  # continue to next column
-
-    return df
+        super(GoogleAnalyticsQuerySource, self).__init__(metadata=metadata)
 
 
-def as_day(timestamp):
-    return timestamp.strftime('%Y-%m-%d')
+class GoogleAnalyticsAPI(object):
+    def __init__(self, credentials_path=None):
+        credentials = None
 
+        if credentials_path:
+            credentials = Credentials.from_service_account_file(credentials_path)
 
-def is_dt(value):
-    return isinstance(value, (dt.datetime, dt.date, pd.Timestamp))
+        self.client = discovery.build('analyticsreporting', 'v4',
+                                      credentials=credentials,
+                                      cache_discovery=False).reports()
 
+    def query(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
+              dimensions: list = None, filters: list = None, include_empty: bool = False):
 
-def ua_query(view_id, start_date, end_date, metrics, dimensions=None, filters=None):
-    ga = discovery.build('analyticsreporting', 'v4',
-                         cache_discovery=False).reports()
+        date_range = {'startDate': start_date, 'endDate': end_date}
+        for key, value in date_range.items():
+            if self._is_dt(value):
+                date_range[key] = self._as_day(value)
+            elif value.lower() in ['yesterday', 'today']:
+                date_range[key] = value.lower()
+            elif re.match(r'\d+DaysAgo', value):
+                pass
+            else:
+                raise ValueError(f'{key}={value} is not a supported date.\n'
+                                 f'Please use a date/datetime object.')
 
-    date_range = {'startDate': start_date, 'endDate': end_date}
-    for key, value in date_range.items():
-        if is_dt(value):
-            date_range[key] = as_day(value)
-        elif value.lower() in ['yesterday', 'today']:
-            date_range[key] = value.lower()
-        elif re.match(r'\d+DaysAgo', value):
-            pass
-        else:
-            raise ValueError(f'{key}={value} is not a supported date.\n'
-                             f'Please use a date/datetime object.')
+        body = {
+            'reportRequests': []
+        }
+        request = {
+            'viewId': view_id,
+            'dateRanges': [date_range],
+            'includeEmptyRows': include_empty
+        }
 
-    body = {
-        'reportRequests': []
-    }
-    request = {
-        'viewId': view_id,
-        'dateRanges': [date_range],
-        'metrics': metrics
-    }
+        request['metrics'] = self._parse_fields(metrics, style='metrics')
 
-    if dimensions:
-        request['dimensions'] = dimensions
+        if dimensions:
+            request['dimensions'] = self._parse_fields(dimensions, style='dimensions')
 
-    if filters:
-        request['filtersExpression'] = filters
+        if filters:
+            request['filtersExpression'] = filters
 
-    body['reportRequests'].append(request)
+        body['reportRequests'].append(request)
 
-    result = ga.batchGet(body=body).execute()
-    report = result['reports'][0]
-
-    dfs = [to_dataframe(report)]
-    while report.get('nextPageToken'):
-        body['reportRequests'][0]['pageToken'] = report.get('nextPageToken')
-        result = ga.batchGet(body=body).execute()
+        result = self.client.batchGet(body=body).execute()
         report = result['reports'][0]
-        dfs.append(to_dataframe(report))
 
-    df = pd.concat(dfs, ignore_index=True)
-    return df
+        dfs = [self._to_dataframe(report)]
+        while report.get('nextPageToken'):
+            body['reportRequests'][0]['pageToken'] = report.get('nextPageToken')
+            result = self.client.batchGet(body=body).execute()
+            report = result['reports'][0]
+            dfs.append(self._to_dataframe(report))
+
+        df = pd.concat(dfs, ignore_index=True)
+        return df
+
+    def _to_dataframe(self, report, parse_dates=True):
+        headers = report['columnHeader']
+
+        columns = headers.get('dimensions', [])
+        metric_columns = headers['metricHeader']['metricHeaderEntries']
+
+        dtypes = {}
+        for c in metric_columns:
+            name = c['name']
+            columns.append(name)
+            dtypes[name] = DTYPES[c['type']]
+
+        data = []
+        for row in report['data']['rows']:
+
+            dim_values = row.get('dimensions', [])
+
+            this_row = []
+            metric_values = row['metrics'][0]['values']
+
+            this_row.extend(dim_values)
+            this_row.extend(metric_values)
+
+            data.append(this_row)
+
+        df = pd.DataFrame(data=data, columns=columns)
+        for c, dtype in dtypes.items():
+            df[c] = df[c].astype(dtype)
+
+        if parse_dates:
+            first_row = df.iloc[[0]]
+            string_columns = first_row.dtypes[first_row.dtypes.apply(is_string_dtype)].index
+            for column in string_columns:
+                for format, regex in DATETIME_FORMATS.items():
+                    if first_row[column].str.fullmatch(regex).all():
+                        df[column] = pd.to_datetime(df[column], format=format)
+                        break  # continue to next column
+
+        return df
+
+    def _as_day(self, timestamp):
+        return timestamp.strftime('%Y-%m-%d')
+
+    def _is_dt(self, value):
+        return isinstance(value, (dt.datetime, dt.date, pd.Timestamp))
+
+    def _parse_fields(self, fields, style):
+        if style not in ['metrics', 'dimensions', 'filters']:
+            raise ValueError(f'{fields} is not supported')
+
+        key = {
+            'metrics': 'expression',
+            'dimensions': 'name',
+            'filters': ''
+        }
+        parsed = []
+        errors = []
+        for f in fields:
+            if isinstance(f, str):
+                parsed.append({key[style]:f})
+            elif isinstance(f, dict):
+                if key[style] in f:
+                    parsed.append(f)
+                else:
+                    errors.append(f"""{f} does not contain "{key[style]}" key.""")
+            else:
+                errors.append(f'{f} is not a valid field string or dict')
+
+        if errors:
+            raise ValueError('\n'.join(errors))
+
+        return parsed
