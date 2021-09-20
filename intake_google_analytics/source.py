@@ -46,7 +46,49 @@ class GoogleAnalyticsQuerySource(DataSource):
 
         self._df = None
 
+        self._view_id = view_id
+        self._start_date = start_date
+        self._end_date = end_date
+        self._metrics = metrics
+        self._dimensions = dimensions
+        self._filters = filters
+        self._include_empty = include_empty
+        self._credentials_path = credentials_path
+
+        self._client = GoogleAnalyticsAPI(credentials_path=credentials_path)
+
         super(GoogleAnalyticsQuerySource, self).__init__(metadata=metadata)
+
+    def _get_schema(self):
+        if self._df is None:
+            self._df = self._client.query(
+                view_id=self._view_id,
+                start_date=self._start_date, end_date=self._end_date,
+                metrics=self._metrics,
+                dimensions=self._dimensions,
+                filters=self._filters,
+                include_empty=self._include_empty
+            )
+
+        return Schema(datashape=None,
+                      dtype=self._df.dtypes,
+                      shape=(None, len(self._df.columns)),
+                      npartitions=1,
+                      extra_metadata={})
+
+    def _get_partition(self, i):
+        self._get_schema()
+        return self._df
+
+    def read(self):
+        self._get_schema()
+        return self._df
+
+    def to_dask(self):
+        raise NotImplementedError()
+
+    def _close(self):
+        self._dataframe = None
 
 
 class GoogleAnalyticsAPI(object):
