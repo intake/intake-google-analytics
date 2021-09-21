@@ -28,6 +28,8 @@ DATETIME_FORMATS = OrderedDict([
     ('%Y%m%d%H%M', re.compile(r'^(?P<year>[0-9]{4})(?P<month>1[0-2]|0[1-9])(?P<day>3[01]|0[1-9]|[12][0-9])(?P<hour>2[0-3]|[01][0-9])(?P<minute>[0-5][0-9])$'))
 ])
 
+YYYY_MM_DD = re.compile(r'^(?P<year>[0-9]{4})-(?P<month>1[0-2]|0[1-9])-(?P<day>3[01]|0[1-9]|[12][0-9])$')
+
 
 class GoogleAnalyticsQuerySource(DataSource):
     """
@@ -40,7 +42,7 @@ class GoogleAnalyticsQuerySource(DataSource):
     partition_access = True
 
     def __init__(self, view_id, start_date, end_date,
-                 metrics, dimensions=None, filters=None, include_empty=False,
+                 metrics, dimensions=None, filters=None,
                  credentials_path=None,
                  metadata=None):
 
@@ -52,7 +54,6 @@ class GoogleAnalyticsQuerySource(DataSource):
         self._metrics = metrics
         self._dimensions = dimensions
         self._filters = filters
-        self._include_empty = include_empty
         self._credentials_path = credentials_path
 
         self._client = GoogleAnalyticsAPI(credentials_path=credentials_path)
@@ -67,7 +68,6 @@ class GoogleAnalyticsQuerySource(DataSource):
                 metrics=self._metrics,
                 dimensions=self._dimensions,
                 filters=self._filters,
-                include_empty=self._include_empty
             )
 
         return Schema(datashape=None,
@@ -103,7 +103,7 @@ class GoogleAnalyticsAPI(object):
                                       cache_discovery=False).reports()
 
     def query(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
-              dimensions: list = None, filters: list = None, include_empty: bool = False):
+              dimensions: list = None, filters: list = None):
 
         date_range = {'startDate': start_date, 'endDate': end_date}
         for key, value in date_range.items():
@@ -111,6 +111,8 @@ class GoogleAnalyticsAPI(object):
                 date_range[key] = self._as_day(value)
             elif value.lower() in ['yesterday', 'today']:
                 date_range[key] = value.lower()
+            elif re.match(YYYY_MM_DD, value):
+                pass
             elif re.match(r'\d+DaysAgo', value):
                 pass
             else:
@@ -123,7 +125,9 @@ class GoogleAnalyticsAPI(object):
         request = {
             'viewId': view_id,
             'dateRanges': [date_range],
-            'includeEmptyRows': include_empty
+            'includeEmptyRows': True,
+            'hideTotals': True,
+            'hideValueRanges': True
         }
 
         request['metrics'] = self._parse_fields(metrics, style='metrics')
@@ -162,12 +166,13 @@ class GoogleAnalyticsAPI(object):
             dtypes[name] = DTYPES[c['type']]
 
         data = []
-        for row in report['data']['rows']:
+        rows = report['data'].get('rows', [])
+        for row in rows:
 
             dim_values = row.get('dimensions', [])
 
             this_row = []
-            metric_values = row['metrics'][0]['values']
+            metric_values = row.get('metrics', [{'values': [0] * len(metric_columns)}])[0]['values']
 
             this_row.extend(dim_values)
             this_row.extend(metric_values)
@@ -178,7 +183,7 @@ class GoogleAnalyticsAPI(object):
         for c, dtype in dtypes.items():
             df[c] = df[c].astype(dtype)
 
-        if parse_dates:
+        if df.any(axis=None) and parse_dates:
             first_row = df.iloc[[0]]
             string_columns = first_row.dtypes[first_row.dtypes.apply(is_string_dtype)].index
             for column in string_columns:
