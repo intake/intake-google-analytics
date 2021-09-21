@@ -2,6 +2,7 @@ import datetime as dt
 import re
 from collections import OrderedDict
 from typing import Union
+from numpy import exp
 
 import pandas as pd
 from google.oauth2.service_account import Credentials
@@ -10,6 +11,7 @@ from intake.source.base import DataSource, Schema
 from pandas.api.types import is_string_dtype
 
 from . import __version__
+from .utils import as_day, is_dt
 
 DTYPES = {
     "INTEGER": int,
@@ -104,11 +106,22 @@ class GoogleAnalyticsAPI(object):
 
     def query(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
               dimensions: list = None, filters: list = None):
+        result = self._query(
+            view_id=view_id, start_date=start_date, end_date=end_date,
+            metrics=metrics, dimensions=dimensions, filters=filters
+        )
+
+        df = self._to_dataframe(result)
+
+        return df
+
+    def _query(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
+              dimensions: list = None, filters: list = None):
 
         date_range = {'startDate': start_date, 'endDate': end_date}
         for key, value in date_range.items():
-            if self._is_dt(value):
-                date_range[key] = self._as_day(value)
+            if is_dt(value):
+                date_range[key] = as_day(value)
             elif value.lower() in ['yesterday', 'today']:
                 date_range[key] = value.lower()
             elif re.match(YYYY_MM_DD, value):
@@ -142,18 +155,22 @@ class GoogleAnalyticsAPI(object):
 
         result = self.client.batchGet(body=body).execute()
         report = result['reports'][0]
+        expected_rows = report['data']['rowCount']
 
-        dfs = [self._to_dataframe(report)]
-        while report.get('nextPageToken'):
-            body['reportRequests'][0]['pageToken'] = report.get('nextPageToken')
+        while result['reports'][0].get('nextPageToken'):
+            body['reportRequests'][0]['pageToken'] = result['reports'][0].get('nextPageToken')
             result = self.client.batchGet(body=body).execute()
-            report = result['reports'][0]
-            dfs.append(self._to_dataframe(report))
+            report['data']['rows'].extend(result['reports'][0]['data']['rows'])
 
-        df = pd.concat(dfs, ignore_index=True)
-        return df
+        gathered_rows = len(report['data']['rows'])
+        if gathered_rows != expected_rows:
+            raise RuntimeError(f'The query was expected to return {expected_rows} rows, '
+                               f'but {gathered_rows} rows were retrieved.')
 
-    def _to_dataframe(self, report, parse_dates=True):
+        return report
+
+    @staticmethod
+    def _to_dataframe(report, parse_dates=True):
         headers = report['columnHeader']
 
         columns = headers.get('dimensions', [])
@@ -194,13 +211,8 @@ class GoogleAnalyticsAPI(object):
 
         return df
 
-    def _as_day(self, timestamp):
-        return timestamp.strftime('%Y-%m-%d')
-
-    def _is_dt(self, value):
-        return isinstance(value, (dt.datetime, dt.date, pd.Timestamp))
-
-    def _parse_fields(self, fields, style):
+    @staticmethod
+    def _parse_fields(fields, style):
         if style not in ['metrics', 'dimensions', 'filters']:
             raise ValueError(f'{fields} is not supported')
 
@@ -213,7 +225,7 @@ class GoogleAnalyticsAPI(object):
         errors = []
         for f in fields:
             if isinstance(f, str):
-                parsed.append({key[style]:f})
+                parsed.append({key[style]: f})
             elif isinstance(f, dict):
                 if key[style] in f:
                     parsed.append(f)
