@@ -4,7 +4,9 @@
 
 ## Install
 
-TBD
+```
+conda install -c defusco -c conda-forge intake-google-analytics
+```
 
 ## Sample query
 
