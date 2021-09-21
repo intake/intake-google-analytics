@@ -1,3 +1,4 @@
+import pytest
 import pandas as pd
 import datetime as dt
 from intake_google_analytics.utils import is_dt, as_day
@@ -20,3 +21,8 @@ def test_as_day():
     assert as_day(pd.to_datetime('2020-03-19')) == '2020-03-19'
     assert as_day(pd.to_datetime('2020-03-19 16:04:00')) == '2020-03-19'
     assert as_day(pd.Timestamp(2020, 3, 19)) == '2020-03-19'
+
+    with pytest.raises(AttributeError):
+        as_day(dt.timedelta(days=1))
+        as_day(pd.DateOffset(days=1))
+        as_day('2020-03-19')

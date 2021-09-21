@@ -1,0 +1,12 @@
+name: test-intake-ga
+dependencies:
+  - google-api-python-client
+  - google-auth-oauthlib
+  - pandas
+  - intake
+  - flake8
+  - pytest
+  - pytest-cov
+channels:
+  - defaults
+  - conda-forge
