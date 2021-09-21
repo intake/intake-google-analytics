@@ -1,6 +1,9 @@
 from setuptools import setup
 import versioneer
 
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
 requirements = [
     'intake',
     'pandas',
@@ -28,5 +31,7 @@ setup(
     classifiers=[
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
-    ]
+    ],
+    long_description=long_description,
+    long_description_content_type='text/markdown'
 )
