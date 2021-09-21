@@ -7,6 +7,8 @@ dependencies:
   - pandas
   - intake
   - flake8
+  - pytest
+  - pytest-cov
 channels:
   - defaults
   - conda-forge
