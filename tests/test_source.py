@@ -223,10 +223,13 @@ class MockGAClient():
         pass
 
     def batchGet(self, body):
-        return MockGABatch()
+        return MockGABatch(body)
 
 
 class MockGABatch():
+    def __init__(self, body):
+        self.body = body
+
     def execute(self):
         pass
 
@@ -292,7 +295,52 @@ def test_query_empty_result(monkeypatch):
         metrics=['ga:user']
     )
     assert df.empty
-    # assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]).astype('int64'))
+
+
+def test_paginated_result(monkeypatch):
+    def execute(self):
+        paginated = [
+            {'reports': [
+                {'nextPageToken': 1,
+                'columnHeader': {'metricHeader': {'metricHeaderEntries': [{'name': 'ga:users',
+                                                                            'type': 'INTEGER'}]}},
+                 'data': {'rowCount': 6, 'rows': [
+                     {'metrics': [{'values': ['1']}]}, {'metrics': [{'values': ['2']}]}
+                     ]}}
+                ]
+             },
+            {'reports': [
+                {'nextPageToken': 2,
+                'columnHeader': {'metricHeader': {'metricHeaderEntries': [{'name': 'ga:users',
+                                                                            'type': 'INTEGER'}]}},
+                 'data': {'rowCount': 6, 'rows': [
+                     {'metrics': [{'values': ['3']}]}, {'metrics': [{'values': ['4']}]}
+                     ]}}
+                ]
+             },
+            {'reports': [
+                {'columnHeader': {'metricHeader': {'metricHeaderEntries': [{'name': 'ga:users',
+                                                                            'type': 'INTEGER'}]}},
+                 'data': {'rowCount': 6, 'rows': [
+                     {'metrics': [{'values': ['5']}]}, {'metrics': [{'values': ['6']}]}
+                     ]}}
+                ]
+             },
+        ]
+
+        page_token = self.body['reportRequests'][0].get('pageToken', 0)
+        return paginated[page_token]
+
+    monkeypatch.setattr(MockGABatch, 'execute', execute)
+    monkeypatch.setattr(GoogleAnalyticsAPI, 'create_client', lambda x: MockGAClient(x))
+
+    ga_api = GoogleAnalyticsAPI(None)
+    df = ga_api.query(
+        'VIEWID',
+        start_date='5DaysAgo', end_date='yesterday',
+        metrics=['ga:user']
+    )
+    assert len(df) == 6
 
 
 def test_driver_func():
