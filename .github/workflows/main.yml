@@ -55,7 +55,7 @@ jobs:
       - name: py.test
         shell: bash -l {0}
         run: |
-          conda install -n test-intake-ga --use-local ~/.conda/conda-bld/intake-google-analytics-*.tar.bz2
+          conda install -n test-intake-ga --use-local ~/.conda/conda-bld/noarch/intake-google-analytics-*.tar.bz2
           py.test -xv
       - name: Codecov
         uses: codecov/codecov-action@v1
