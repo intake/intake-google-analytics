@@ -51,11 +51,11 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: package-${{ github.sha }}
-          path: /usr/share/miniconda3/conda-bld
+          path: ./.conda/conda-bld
       - name: py.test
         shell: bash -l {0}
         run: |
-          conda install -n test-intake-ga local::intake-google-analytics -y
+          conda install -n test-intake-ga -c file://.conda/conda-bld intake-google-analytics -y
           py.test -xv
       - name: Codecov
         uses: codecov/codecov-action@v1
