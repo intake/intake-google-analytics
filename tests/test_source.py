@@ -343,10 +343,6 @@ def test_paginated_result(monkeypatch):
     assert len(df) == 6
 
 
-def test_driver_func():
-    assert hasattr(intake, 'open_google_analytics_query')
-
-
 def test_load_dataset(monkeypatch):
     monkeypatch.setattr(MockGABatch, 'execute', lambda body: {
             'reports': [
