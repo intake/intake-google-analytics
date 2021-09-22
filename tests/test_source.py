@@ -381,4 +381,4 @@ def test_load_dataset(monkeypatch):
     assert ds.yaml() == yaml
 
     df = ds.read()
-    assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]).astype('int64'))
+    assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]), check_dtype=False)
