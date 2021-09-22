@@ -3,7 +3,8 @@ import datetime as dt
 import pandas as pd
 import pytest
 from intake_google_analytics.source import GoogleAnalyticsAPI
-from pandas.api.types import is_datetime64_any_dtype, is_integer_dtype, is_float_dtype
+from pandas.api.types import (is_datetime64_any_dtype, is_float_dtype,
+                              is_integer_dtype)
 from pandas.testing import assert_frame_equal
 
 
@@ -207,4 +208,4 @@ def test_query(monkeypatch):
         start_date='5DaysAgo', end_date='yesterday',
         metrics=['ga:user']
     )
-    assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]))
+    assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]).astype('int64'))
