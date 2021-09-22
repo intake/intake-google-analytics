@@ -251,7 +251,7 @@ def test_query_to_dataframe(monkeypatch):
         start_date='5DaysAgo', end_date='yesterday',
         metrics=['ga:user']
     )
-    assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]), check_column_type='equiv')
+    assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]), check_dtype=False)
 
 
 def test_query_wrong_row_count(monkeypatch):
