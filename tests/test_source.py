@@ -2,6 +2,7 @@ import datetime as dt
 
 import pandas as pd
 import pytest
+import intake
 from intake_google_analytics.source import GoogleAnalyticsAPI
 from pandas.api.types import (is_datetime64_any_dtype, is_float_dtype,
                               is_integer_dtype)
@@ -37,6 +38,13 @@ def test_parse_metrics():
     parsed = GoogleAnalyticsAPI._parse_fields(metrics, style='metrics')
     assert parsed == metrics
 
+    with pytest.raises(ValueError):
+        metrics = [{"espresso": 'ga:session', 'alias': 'Session'}]
+        GoogleAnalyticsAPI._parse_fields(metrics, style='metrics')
+
+    with pytest.raises(ValueError):
+        GoogleAnalyticsAPI._parse_fields([1], style='metrics')
+
 
 def test_parse_dimensions():
     dimensions = ['ga:userType']
@@ -54,6 +62,13 @@ def test_parse_dimensions():
     dimensions = [{'name': 'ga:date'}]
     parsed = GoogleAnalyticsAPI._parse_fields(dimensions, style='dimensions')
     assert parsed == dimensions
+
+    with pytest.raises(ValueError):
+        dimensions = [{"nom": 'ga:date'}]
+        GoogleAnalyticsAPI._parse_fields(dimensions, style='dimensions')
+
+    with pytest.raises(ValueError):
+        GoogleAnalyticsAPI._parse_fields([1], style='dimensions')
 
 
 def test_parse_date_objects():
@@ -93,6 +108,30 @@ def test_query_body(monkeypatch):
          'hideValueRanges': True,
          'includeEmptyRows': True,
          'metrics': [{'expression': 'ga:users'}],
+         'viewId': 'VIEWID'}
+    ]}
+
+    client = GoogleAnalyticsAPI(None)
+    body = client._build_body(**inputs)
+    assert body == expected_body
+
+
+def test_query_body_with_dimensions(monkeypatch):
+    monkeypatch.setattr(GoogleAnalyticsAPI, 'create_client', lambda x: None)
+
+    inputs = {
+        'view_id': 'VIEWID',
+        'start_date': '5DaysAgo', 'end_date': 'yesterday',
+        'metrics': ['ga:users'],
+        'dimensions': ['ga:userType']
+    }
+    expected_body = {'reportRequests': [
+        {'dateRanges': [{'endDate': 'yesterday', 'startDate': '5DaysAgo'}],
+         'hideTotals': True,
+         'hideValueRanges': True,
+         'includeEmptyRows': True,
+         'metrics': [{'expression': 'ga:users'}],
+         'dimensions': [{'name': 'ga:userType'}],
          'viewId': 'VIEWID'}
     ]}
 
@@ -189,23 +228,113 @@ class MockGAClient():
 
 class MockGABatch():
     def execute(self):
-        result = {
+        pass
+
+
+def test_query_to_dataframe(monkeypatch):
+    monkeypatch.setattr(MockGABatch, 'execute', lambda body: {
             'reports': [
                 {'columnHeader': {'metricHeader': {'metricHeaderEntries': [{'name': 'ga:users',
                                                             'type': 'INTEGER'}]}},
                  'data': {'rowCount': 1, 'rows': [{'metrics': [{'values': ['1']}]}]}}
-            ]
-        }
-        return result
-
-
-def test_query(monkeypatch):
+                ]
+            }
+    )
     monkeypatch.setattr(GoogleAnalyticsAPI, 'create_client', lambda x: MockGAClient(x))
 
-    ga_api = GoogleAnalyticsAPI('a')
+    ga_api = GoogleAnalyticsAPI(None)
     df = ga_api.query(
         'VIEWID',
         start_date='5DaysAgo', end_date='yesterday',
         metrics=['ga:user']
     )
+    assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]).astype('int64'))
+
+
+def test_query_wrong_row_count(monkeypatch):
+    monkeypatch.setattr(MockGABatch, 'execute', lambda body: {
+            'reports': [
+                {'columnHeader': {'metricHeader': {'metricHeaderEntries': [{'name': 'ga:users',
+                                                            'type': 'INTEGER'}]}},
+                 'data': {'rowCount': 1, 'rows': [
+                     {'metrics': [{'values': ['1']}]},
+                     {'metrics': [{'values': ['2']}]}
+                     ]}}
+                ]
+            }
+    )
+    monkeypatch.setattr(GoogleAnalyticsAPI, 'create_client', lambda x: MockGAClient(x))
+
+    ga_api = GoogleAnalyticsAPI(None)
+    with pytest.raises(RuntimeError):
+        _ = ga_api._query(
+            'VIEWID',
+            start_date='5DaysAgo', end_date='yesterday',
+            metrics=['ga:user']
+        )
+
+
+def test_query_empty_result(monkeypatch):
+    monkeypatch.setattr(MockGABatch, 'execute', lambda body: {
+            'reports': [
+                {'columnHeader': {'metricHeader': {'metricHeaderEntries': [{'name': 'ga:users',
+                                                            'type': 'INTEGER'}]}},
+                 'data': {}}
+                ]
+            }
+    )
+    monkeypatch.setattr(GoogleAnalyticsAPI, 'create_client', lambda x: MockGAClient(x))
+
+    ga_api = GoogleAnalyticsAPI(None)
+    df = ga_api.query(
+        'VIEWID',
+        start_date='5DaysAgo', end_date='yesterday',
+        metrics=['ga:user']
+    )
+    assert df.empty
+    # assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]).astype('int64'))
+
+
+def test_driver_func():
+    assert hasattr(intake, 'open_google_analytics_query')
+
+
+def test_load_dataset(monkeypatch):
+    monkeypatch.setattr(MockGABatch, 'execute', lambda body: {
+            'reports': [
+                {'columnHeader': {'metricHeader': {'metricHeaderEntries': [{'name': 'ga:users',
+                                                            'type': 'INTEGER'}]}},
+                 'data': {'rowCount': 1, 'rows': [{'metrics': [{'values': ['1']}]}]}}
+                ]
+            }
+    )
+    monkeypatch.setattr(GoogleAnalyticsAPI, 'create_client', lambda x: MockGAClient(x))
+
+    ds = intake.open_google_analytics_query(
+        'VIEWID',
+        start_date='5DaysAgo', end_date='yesterday',
+        metrics=['ga:user'],
+        credentials_path=None
+    )
+
+    assert ds.name == 'google_analytics_query'
+    assert ds.container == 'dataframe'
+
+    yaml = """sources:
+  google_analytics_query:
+    args:
+      credentials_path: null
+      end_date: yesterday
+      metrics:
+      - ga:user
+      start_date: 5DaysAgo
+      view_id: VIEWID
+    description: ''
+    driver: intake_google_analytics.source.GoogleAnalyticsQuerySource
+    metadata: {}
+"""
+
+    assert ds.yaml() == yaml
+
+    df = ds.read()
     assert_frame_equal(df, pd.DataFrame([{'ga:users': 1}]).astype('int64'))

@@ -90,7 +90,7 @@ class GoogleAnalyticsQuerySource(DataSource):
         raise NotImplementedError()
 
     def _close(self):
-        self._dataframe = None
+        self._df = None
 
 
 class GoogleAnalyticsAPI(object):
