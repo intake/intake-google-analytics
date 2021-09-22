@@ -17,7 +17,7 @@ DTYPES = {
     "INTEGER": int,
     "TIME": float,
     "PERCENT": float,
-    "STRING": str,
+    "FLOAT": float,
     "CURRENCY": float
 }
 
@@ -94,47 +94,35 @@ class GoogleAnalyticsQuerySource(DataSource):
 
 
 class GoogleAnalyticsAPI(object):
-    def __init__(self, credentials_path=None):
-        credentials = None
+    def __init__(self, credentials_path):
+        self._credentials_path = credentials_path
+        self.client = self.create_client()
 
-        if credentials_path:
-            credentials = Credentials.from_service_account_file(credentials_path)
+    def create_client(self):
+        credentials = Credentials.from_service_account_file(self._credentials_path)
+        c = discovery.build('analyticsreporting', 'v4',
+                            credentials=credentials,
+                            cache_discovery=False).reports()
+        return c
 
-        self.client = discovery.build('analyticsreporting', 'v4',
-                                      credentials=credentials,
-                                      cache_discovery=False).reports()
-
-    def query(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
-              dimensions: list = None, filters: list = None):
+    def query(self, view_id: str, start_date: DateTypes, end_date: DateTypes,
+              metrics: list, dimensions: list = None, filters: list = None):
         result = self._query(
             view_id=view_id, start_date=start_date, end_date=end_date,
             metrics=metrics, dimensions=dimensions, filters=filters
         )
 
         df = self._to_dataframe(result)
-
         return df
 
-    def _query(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
+    def _build_body(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
               dimensions: list = None, filters: list = None):
 
-        date_range = {'startDate': start_date, 'endDate': end_date}
-        for key, value in date_range.items():
-            if is_dt(value):
-                date_range[key] = as_day(value)
-            elif value.lower() in ['yesterday', 'today']:
-                date_range[key] = value.lower()
-            elif re.match(YYYY_MM_DD, value):
-                pass
-            elif re.match(r'\d+DaysAgo', value):
-                pass
-            else:
-                raise ValueError(f'{key}={value} is not a supported date.\n'
-                                 f'Please use a date/datetime object.')
-
-        body = {
-            'reportRequests': []
+        date_range = {
+            'startDate': self._parse_date(start_date),
+            'endDate': self._parse_date(end_date)
         }
+
         request = {
             'viewId': view_id,
             'dateRanges': [date_range],
@@ -151,11 +139,23 @@ class GoogleAnalyticsAPI(object):
         if filters:
             request['filtersExpression'] = filters
 
-        body['reportRequests'].append(request)
+        body = {'reportRequests': [request]}
+        return body
+
+    def _query(self, view_id: str, start_date: DateTypes, end_date: DateTypes, metrics: list,
+              dimensions: list = None, filters: list = None):
+
+        body = self._build_body(
+            view_id=view_id, start_date=start_date, end_date=end_date,
+            metrics=metrics, dimensions=dimensions, filters=filters
+        )
 
         result = self.client.batchGet(body=body).execute()
+
         report = result['reports'][0]
-        expected_rows = report['data']['rowCount']
+        expected_rows = report['data'].get('rowCount', 0)
+        if expected_rows == 0:
+            return report
 
         while result['reports'][0].get('nextPageToken'):
             body['reportRequests'][0]['pageToken'] = result['reports'][0].get('nextPageToken')
@@ -238,3 +238,18 @@ class GoogleAnalyticsAPI(object):
             raise ValueError('\n'.join(errors))
 
         return parsed
+
+    @staticmethod
+    def _parse_date(value):
+        if is_dt(value):
+            return as_day(value)
+        elif value in ['yesterday', 'today']:
+            return value
+        elif re.match(YYYY_MM_DD, value):
+            return value
+        elif re.match(r'\d+DaysAgo', value):
+            return value
+        else:
+            raise ValueError(f'{value} is not a supported date.\n'
+                             f'Please use a date/datetime object or string of the following formats:\n'
+                             f'"yesterday", "today", "NDaysAgo", "YYYY-MM-DD"')
