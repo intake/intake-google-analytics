@@ -1,0 +1,5 @@
+name: build-intake-ga
+dependencies:
+  - conda
+  - conda-build
+  - conda-verify
