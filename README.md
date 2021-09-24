@@ -1,6 +1,6 @@
 # Intake Google Analytics driver
 
-[Intake][intake.readthedocs.io] driver for [Google Analytics Queries](https://developers.google.com/analytics/devguides/reporting/core/v4/quickstart/service-py)
+[Intake](intake.readthedocs.io) driver for [Google Analytics Queries](https://developers.google.com/analytics/devguides/reporting/core/v4/quickstart/service-py)
 
 ## Install
 
