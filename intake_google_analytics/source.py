@@ -73,7 +73,7 @@ class GoogleAnalyticsQuerySource(DataSource):
             )
 
         return Schema(datashape=None,
-                      dtype=self._df.dtypes,
+                      dtype={k: str(v) for k,v in self._df.dtypes.items()},
                       shape=(None, len(self._df.columns)),
                       npartitions=1,
                       extra_metadata={})
